@@ -212,7 +212,7 @@ namespace Connect
             });
 
             await socket.ConnectAsync();
-            socket.Emit("host-join", new { sessionId });
+            await socket.EmitAsync("host-join", new { sessionId });
         }
 
         private async Task StartWebRTC(string viewerId)

@@ -26,7 +26,7 @@ namespace Connect
 
     public class MainForm : Form
     {
-        private const string SIGNAL_SERVER = "https://YOUR-SERVER.railway.app"; // заменить после деплоя
+        private const string SIGNAL_SERVER = "https://webrtc-69xt.onrender.com";
 
         private WebView2 webView = null!;
         private Label labelSession = null!;

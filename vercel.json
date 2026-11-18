@@ -1,6 +1,8 @@
 {
   "version": 2,
-  "routes": [
-    { "src": "/(.*)", "dest": "/site/$1" }
+  "rewrites": [
+    { "source": "/", "destination": "/site/index.html" },
+    { "source": "/viewer", "destination": "/site/viewer.html" },
+    { "source": "/(.*)", "destination": "/site/$1" }
   ]
 }

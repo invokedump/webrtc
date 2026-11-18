@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Connect - Viewer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0a;
+      --surface: #1a1a1a;
+      --border: #2a2a2a;
+      --accent: #6366f1;
+      --text: #f1f1f1;
+      --muted: #888;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-shrink: 0;
+    }
+
+    .logo { font-weight: 700; color: var(--accent); font-size: 1.1rem; }
+
+    .session-badge {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 12px;
+      font-size: 0.85rem;
+      letter-spacing: 1px;
+      color: var(--muted);
+    }
+
+    .status {
+      margin-left: auto;
+      font-size: 0.82rem;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #888;
+      transition: background 0.3s;
+    }
+
+    .dot.connected { background: #4ade80; }
+    .dot.connecting { background: #facc15; animation: pulse 1s infinite; }
+    .dot.error { background: #f87171; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .viewer-area {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      position: relative;
+    }
+
+    video {
+      max-width: 100%;
+      max-height: 100%;
+      display: none;
+      background: #000;
+    }
+
+    .placeholder {
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .placeholder .icon {
+      font-size: 3rem;
+      margin-bottom: 12px;
+      opacity: 0.3;
+    }
+
+    .placeholder p { font-size: 0.9rem; }
+
+    .controls {
+      position: absolute;
+      bottom: 16px;
+      right: 16px;
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn {
+      background: rgba(26,26,26,0.9);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      backdrop-filter: blur(4px);
+      transition: background 0.15s;
+    }
+
+    .btn:hover { background: var(--accent); border-color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="logo">Connect</div>
+    <div class="session-badge" id="sessionLabel">—</div>
+    <div class="status">
+      <div class="dot connecting" id="statusDot"></div>
+      <span id="statusText">Подключение...</span>
+    </div>
+  </div>
+
+  <div class="viewer-area">
+    <video id="remoteVideo" autoplay playsinline></video>
+    <div class="placeholder" id="placeholder">
+      <div class="icon">🖥️</div>
+      <p>Ожидание подключения хоста...</p>
+    </div>
+    <div class="controls">
+      <button class="btn" onclick="toggleFullscreen()">⛶ Полный экран</button>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+  <script>
+    const SIGNAL_SERVER = 'https://webrtc-69xt.onrender.com';
+
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get('session');
+
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const remoteVideo = document.getElementById('remoteVideo');
+    const placeholder = document.getElementById('placeholder');
+    const sessionLabel = document.getElementById('sessionLabel');
+
+    if (sessionId) sessionLabel.textContent = sessionId;
+
+    function setStatus(state, text) {
+      statusDot.className = 'dot ' + state;
+      statusText.textContent = text;
+    }
+
+    if (!sessionId) {
+      setStatus('error', 'Нет кода сессии');
+      placeholder.querySelector('p').textContent = 'Вернись на главную и введи код.';
+    } else {
+      const socket = io(SIGNAL_SERVER, { transports: ['websocket'] });
+      let pc = null;
+
+      socket.on('connect', () => {
+        setStatus('connecting', 'Вход в сессию...');
+        socket.emit('viewer-join', { sessionId });
+      });
+
+      socket.on('viewer-joined', () => {
+        setStatus('connecting', 'Ожидание хоста...');
+      });
+
+      socket.on('error', ({ message }) => {
+        setStatus('error', message);
+        placeholder.querySelector('p').textContent = message;
+      });
+
+      socket.on('host-disconnected', () => {
+        setStatus('error', 'Хост отключился');
+        remoteVideo.style.display = 'none';
+        placeholder.style.display = 'block';
+        if (pc) { pc.close(); pc = null; }
+      });
+
+      socket.on('webrtc-offer', async ({ senderId, offer }) => {
+        pc = createPeerConnection(senderId);
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('webrtc-answer', { targetId: senderId, answer });
+      });
+
+      socket.on('webrtc-ice-candidate', ({ candidate }) => {
+        if (pc && candidate) {
+          pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+        }
+      });
+
+      function createPeerConnection(hostId) {
+        const p = new RTCPeerConnection({
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+          ]
+        });
+
+        p.onicecandidate = ({ candidate }) => {
+          if (candidate) {
+            socket.emit('webrtc-ice-candidate', { targetId: hostId, candidate });
+          }
+        };
+
+        p.ontrack = (event) => {
+          remoteVideo.srcObject = event.streams[0];
+          remoteVideo.style.display = 'block';
+          placeholder.style.display = 'none';
+          setStatus('connected', 'Подключено');
+        };
+
+        p.onconnectionstatechange = () => {
+          if (p.connectionState === 'disconnected' || p.connectionState === 'failed') {
+            setStatus('error', 'Соединение прервано');
+          }
+        };
+
+        return p;
+      }
+    }
+
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        remoteVideo.requestFullscreen?.();
+      } else {
+        document.exitFullscreen?.();
+      }
+    }
+  </script>
+</body>
+</html>
